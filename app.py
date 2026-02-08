@@ -5,25 +5,27 @@ from streamlit_folium import st_folium
 import requests
 
 # --- CREDENCIALES APIFY ---
+# Usamos el token que me pasaste como password del proxy
 APIFY_TOKEN = "apify_api_fadESORCWQXTB7EaZDOdO4fGDKC8yx0lSmqz"
 
-st.set_page_config(page_title="Radar Satelital Premium (Apify)", layout="wide")
+st.set_page_config(page_title="Radar Satelital Ultra-Pro", layout="wide")
 
 @st.cache_data(ttl=60)
-def obtener_vuelos_apify():
-    # Usaremos el motor de Apify para consultar OpenSky sin bloqueos
-    # Nota: Usamos una petición estructurada para saltar el 429
-    url_opensky = "https://opensky-network.org/api/states/all?lamin=34.0&lomin=-10.0&lamax=44.5&lomax=4.5"
+def obtener_vuelos_apify_v2():
+    url_opensky = "https://opensky-network.org/api/states/all"
+    params = {'lamin': 34.0, 'lomin': -10.0, 'lamax': 44.5, 'lomax': 4.5}
     
-    # Apify tiene un servicio de "Proxy" que podemos usar con requests
+    # ESTRUCTURA CORRECTA PARA APIFY PROXY
+    # Formato: http://groups-RESIDENTIAL:TOKEN@proxy.apify.com:8000
+    proxy_url = f"http://groups-RESIDENTIAL:{APIFY_TOKEN}@proxy.apify.com:8000"
     proxies = {
-        "http": f"http://groups-RESIDENTIAL:{APIFY_TOKEN}@proxy.apify.com:8000",
-        "https": f"http://groups-RESIDENTIAL:{APIFY_TOKEN}@proxy.apify.com:8000",
+        "http": proxy_url,
+        "https": proxy_url,
     }
 
     try:
-        # Intentamos la petición a través del túnel de Apify
-        r = requests.get(url_opensky, proxies=proxies, timeout=20)
+        # Hacemos la petición a través del proxy residencial
+        r = requests.get(url_opensky, params=params, proxies=proxies, timeout=30)
         
         if r.status_code == 200:
             datos = r.json()
@@ -31,19 +33,18 @@ def obtener_vuelos_apify():
                 cols = ['icao24', 'callsign', 'pais', 'tiempo', 'contacto', 'long', 'lat', 'altitud', 'suelo', 'velocidad', 'rumbo', 'v_vertical']
                 df = pd.DataFrame([f[:12] for f in datos['states']], columns=cols)
                 df['callsign'] = df['callsign'].str.strip()
-                return df, "🟢 Conexión Segura vía Apify"
+                return df, "🟢 Túnel Apify Establecido"
         
-        return None, f"Apify respondió con estado: {r.status_code}"
+        return None, f"Error del Servidor: {r.status_code}"
     except Exception as e:
-        return None, f"Error en el túnel Apify: {str(e)}"
+        return None, f"Reintentando conexión... (Causa: {str(e)[:50]})"
 
 # --- INTERFAZ ---
-st.title("🛰️ Radar Satelital con Túnel Apify")
-st.markdown("Usando proxies residenciales para evitar bloqueos 429.")
+st.title("🛰️ Radar Satelital (Vía Proxy Residencial)")
 
-df, status_msg = obtener_vuelos_apify()
+df, status_msg = obtener_vuelos_apify_v2()
 
-st.sidebar.header("📊 Sistema Proxy")
+st.sidebar.header("📡 Estado del Túnel")
 st.sidebar.info(status_msg)
 
 # Mapa Satelital de Google
@@ -68,6 +69,6 @@ if df is not None:
             ).add_to(m)
     st.success(f"Radar Activo: {len(df)} aviones detectados.")
 else:
-    st.warning(f"Esperando respuesta del túnel: {status_msg}")
+    st.warning(f"Esperando datos del túnel... {status_msg}")
 
-st_folium(m, width="100%", height=600, key="mapa_apify")
+st_folium(m, width="100%", height=600, key="mapa_v22")
