@@ -5,17 +5,23 @@ import folium
 from streamlit_folium import st_folium
 from streamlit_autorefresh import st_autorefresh
 
-# 1. MEMORIA DE LA PÁGINA
+# 1. MEMORIA DE LA PÁGINA (Para no perder el zoom)
 if 'map_center' not in st.session_state:
     st.session_state['map_center'] = [40.41, -3.70]
 if 'map_zoom' not in st.session_state:
     st.session_state['map_zoom'] = 6
 
-st.set_page_config(page_title="Radar Pro - Blindado", layout="wide")
+st.set_page_config(page_title="Radar Pro + Buscador", layout="wide")
 
-st_autorefresh(interval=30000, key="datarefresh")
+# 2. CONFIGURACIÓN DE ACTUALIZACIÓN (120000 ms = 2 Minutos)
+st_autorefresh(interval=120000, key="datarefresh")
 
-st.title("🛰️ Centro de Control Aéreo (Versión Estable)")
+st.title("🛰️ Radar de Vuelos con Buscador")
+
+# --- BARRA LATERAL (Panel de Control) ---
+st.sidebar.header("Panel de Búsqueda")
+# Buscador que convierte a mayúsculas automáticamente
+busqueda = st.sidebar.text_input("🔍 Buscar por Código de Vuelo (Callsign):", "").upper().strip()
 
 def obtener_vuelos():
     url = "https://opensky-network.org/api/states/all?lamin=34.0&lomin=-10.0&lamax=44.5&lomax=4.5"
@@ -32,43 +38,50 @@ def obtener_vuelos():
 df = obtener_vuelos()
 
 if df is not None:
+    # --- FILTRO DE BÚSQUEDA ---
+    if busqueda:
+        df_mostrar = df[df['callsign'].str.contains(busqueda, na=False)]
+        st.sidebar.success(f"Encontrados: {len(df_mostrar)} avión/es")
+    else:
+        df_mostrar = df
+        st.sidebar.info(f"Total en España: {len(df)} aviones")
+
+    # --- MAPA ---
     m = folium.Map(
         location=st.session_state['map_center'], 
         zoom_start=st.session_state['map_zoom'], 
         tiles="CartoDB dark_matter"
     )
 
-    for _, v in df.iterrows():
-        # --- LIMPIEZA DE DATOS NIVEL EXPERTO ---
-        # Usamos pd.isna() para detectar CUALQUIER tipo de valor vacío
+    for _, v in df_mostrar.iterrows():
         lat, lon = v['lat'], v['long']
         
         if not pd.isna(lat) and not pd.isna(lon):
-            # Creamos variables seguras
+            # Limpieza de datos segura
             callsign = v['callsign'] if not pd.isna(v['callsign']) else "???"
-            
-            # Si el valor no es un número válido, ponemos 0
             try:
-                altitud = int(v['altitud']) if not pd.isna(v['altitud']) else 0
-                velocidad = int(v['velocidad'] * 3.6) if not pd.isna(v['velocidad']) else 0
-                rumbo = int(v['rumbo']) if not pd.isna(v['rumbo']) else 0
+                alt = int(v['altitud']) if not pd.isna(v['altitud']) else 0
+                vel = int(v['velocidad'] * 3.6) if not pd.isna(v['velocidad']) else 0
+                rumb = int(v['rumbo']) if not pd.isna(v['rumbo']) else 0
             except:
-                altitud, velocidad, rumbo = 0, 0, 0
+                alt, vel, rumb = 0, 0, 0
                 
-            pais = v['pais'] if not pd.isna(v['pais']) else "Internacional"
+            pais = v['pais'] if not pd.isna(v['pais']) else "N/A"
 
-            # Ventana emergente
+            # Ventana emergente con todos los datos
             html_popup = f"""
             <div style="font-family: sans-serif; min-width: 180px;">
-                <h4 style="color: #007bff; margin: 0;">{callsign}</h4>
+                <h4 style="color: #007bff; margin: 0;">✈ {callsign}</h4>
                 <hr style="margin: 5px 0;">
                 <p style="margin: 2px 0;"><b>País:</b> {pais}</p>
-                <p style="margin: 2px 0;"><b>Alt:</b> {altitud} m</p>
-                <p style="margin: 2px 0;"><b>Vel:</b> {velocidad} km/h</p>
+                <p style="margin: 2px 0;"><b>Altitud:</b> {alt} m</p>
+                <p style="margin: 2px 0;"><b>Velocidad:</b> {vel} km/h</p>
+                <p style="margin: 2px 0;"><b>Rumbo:</b> {rumb}°</p>
             </div>
             """
             
-            icon_html = f'''<div style="transform: rotate({rumbo}deg); color: #00FF00; font-size: 18px;">✈</div>'''
+            # Icono verde neón
+            icon_html = f'''<div style="transform: rotate({rumb}deg); color: #00FF00; font-size: 20px;">✈</div>'''
             
             folium.Marker(
                 [lat, lon],
@@ -76,14 +89,16 @@ if df is not None:
                 icon=folium.DivIcon(html=icon_html)
             ).add_to(m)
 
-    # Mostrar mapa y capturar interacción
-    output = st_folium(m, width="100%", height=600, key="mapa_v5")
+    # Mostrar mapa
+    output = st_folium(m, width="100%", height=600, key="mapa_v6")
 
-    # Guardar posición para que no se resetee el zoom
+    # Guardar estado para que no se mueva el zoom al actualizar
     if output and output.get('center'):
         st.session_state['map_center'] = [output['center']['lat'], output['center']['lng']]
     if output and output.get('zoom'):
         st.session_state['map_zoom'] = output['zoom']
 
+    st.caption(f"Última actualización: {pd.Timestamp.now().strftime('%H:%M:%S')} (Próxima en 2 min)")
+
 else:
-    st.info("Esperando datos de la API de OpenSky...")
+    st.error("📡 Error al conectar con OpenSky. Esperando respuesta...")
