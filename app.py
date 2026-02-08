@@ -5,73 +5,65 @@ import folium
 from streamlit_folium import st_folium
 from requests.auth import HTTPBasicAuth
 
-# --- CREDENCIALES ---
-# Asegúrate de que el ID no tenga espacios
-CLIENT_ID = "mangrarecio-api-client" 
-CLIENT_SECRET = "c6yQEHTTqDM2Udi41RI98t4UUur49anO"
+# --- VOLVEMOS A LAS CREDENCIALES DE USUARIO (Más estables) ---
+USER_OPENSKY = "mangrarecio"
+PASS_OPENSKY = "Manga1234@"
 
-st.set_page_config(page_title="Radar Satelital Profesional", layout="wide")
+st.set_page_config(page_title="Radar Satelital Pro", layout="wide")
 
-@st.cache_data(ttl=180)
-def obtener_vuelos_definitivo():
-    # Simplificamos la URL al máximo
+@st.cache_data(ttl=120)
+def obtener_vuelos_final_v26():
     url = "https://opensky-network.org/api/states/all"
-    # España: Coordenadas simplificadas
-    params = {
-        'lamin': 34.0, 'lamax': 45.0,
-        'lomin': -10.0, 'lomax': 5.0
-    }
+    # Ajustamos el área a la Península e Islas
+    params = {'lamin': 34.0, 'lamax': 44.5, 'lomin': -10.0, 'lomax': 4.5}
     
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0'
     }
     
     try:
-        # Intentamos conexión directa
-        # Usamos timeout largo de 20 segundos por si el servidor está lento
+        # Usamos Autenticación Básica con usuario y contraseña
         r = requests.get(
             url, 
             params=params, 
-            auth=HTTPBasicAuth(CLIENT_ID, CLIENT_SECRET),
+            auth=HTTPBasicAuth(USER_OPENSKY, PASS_OPENSKY),
             headers=headers,
-            timeout=20 
+            timeout=20
         )
         
+        # Si da 401 con usuario, intentamos entrar como ANÓNIMO (Modo Público)
+        if r.status_code == 401:
+            r = requests.get(url, params=params, headers=headers, timeout=15)
+            status = "📡 Conectado (Modo Público)"
+        elif r.status_code == 200:
+            status = f"🟢 Conectado como {USER_OPENSKY}"
+        else:
+            status = f"⚠️ Estado: {r.status_code}"
+
         if r.status_code == 200:
             datos = r.json()
             if datos and 'states' in datos and datos['states']:
                 cols = ['icao24', 'callsign', 'pais', 'tiempo', 'contacto', 'long', 'lat', 'altitud', 'suelo', 'velocidad', 'rumbo', 'v_vertical']
                 df = pd.DataFrame([f[:12] for f in datos['states']], columns=cols)
                 df['callsign'] = df['callsign'].str.strip()
-                return df, "🟢 Radar Online"
-            return None, "☁️ Sin tráfico detectado"
+                return df, status
         
-        elif r.status_code == 429:
-            return None, "🔴 Saturación: Esperando desbloqueo (5 min)"
-        elif r.status_code == 401:
-            return None, "❌ Error 401: Llaves no activas"
-        else:
-            return None, f"⚠️ Error {r.status_code}"
+        if r.status_code == 429:
+            return None, "🔴 API Saturada (429): Espera 3 min"
+        return None, status
             
     except Exception as e:
-        # Si hay error de red, intentamos una vez más sin autenticación (Modo Público)
-        try:
-            r_anon = requests.get(url, params=params, headers=headers, timeout=10)
-            if r_anon.status_code == 200:
-                return obtener_vuelos_definitivo.__wrapped__()
-        except:
-            pass
         return None, "📡 Buscando señal del servidor..."
 
 # --- INTERFAZ ---
 st.title("🌍 Radar Satelital de España")
 
-df, status_msg = obtener_vuelos_definitivo()
+df, status_msg = obtener_vuelos_final_v26()
 
 st.sidebar.header("📊 Sistema")
 st.sidebar.info(f"Estado: {status_msg}")
 
-# Mapa Satelital de Google (Este nunca falla)
+# Mapa Satelital de Google
 m = folium.Map(
     location=[40.41, -3.70], 
     zoom_start=6, 
@@ -94,4 +86,4 @@ if df is not None:
 else:
     st.warning(status_msg)
 
-st_folium(m, width="100%", height=600, key="radar_v25")
+st_folium(m, width="100%", height=600, key="radar_final_v26")
