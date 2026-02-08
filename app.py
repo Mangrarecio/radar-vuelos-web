@@ -12,43 +12,48 @@ if 'map_zoom' not in st.session_state:
     st.session_state['map_zoom'] = 6
 
 st.set_page_config(page_title="Radar Satelital Pro", layout="wide")
+
+# Actualización cada 2 minutos
 st_autorefresh(interval=120000, key="datarefresh")
 
 st.title("🌍 Radar de Vuelos Satelital")
 
-# --- PANEL LATERAL CON SOLUCIÓN AL BUSCADOR ---
-st.sidebar.header("🔍 Seguimiento de Vuelo")
-
-# Input de búsqueda
+# --- PANEL LATERAL ---
+st.sidebar.header("🔍 Control de Radar")
 busqueda_input = st.sidebar.text_input("Introduce CallSign (ej: IBE2622):", key="search_box").upper().strip()
 
-# Botón para limpiar rápido
-if st.sidebar.button("Mostrar todos los vuelos"):
+if st.sidebar.button("🔄 Forzar Actualización / Mostrar Todos"):
     st.session_state.search_box = ""
+    st.cache_data.clear() # Limpiamos la memoria para traer datos nuevos sí o sí
     st.rerun()
 
 @st.cache_data(ttl=110)
 def obtener_vuelos():
-    # Coordenadas de España + un poco de margen
+    # Coordenadas de España
     url = "https://opensky-network.org/api/states/all?lamin=34.0&lomin=-10.0&lamax=44.5&lomax=4.5"
     try:
-        r = requests.get(url, timeout=10)
-        datos = r.json()
-        columnas = ['icao24', 'callsign', 'pais', 'tiempo', 'contacto', 'long', 'lat', 'altitud', 'suelo', 'velocidad', 'rumbo', 'v_vertical']
-        df = pd.DataFrame([fila[:12] for fila in datos['states']], columns=columnas)
-        df['callsign'] = df['callsign'].str.strip()
-        return df
-    except:
+        # Añadimos un 'User-Agent' para que la API no nos bloquee pensando que somos un robot
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        r = requests.get(url, headers=headers, timeout=15)
+        
+        if r.status_code == 200:
+            datos = r.json()
+            if datos and 'states' in datos and datos['states'] is not None:
+                columnas = ['icao24', 'callsign', 'pais', 'tiempo', 'contacto', 'long', 'lat', 'altitud', 'suelo', 'velocidad', 'rumbo', 'v_vertical']
+                df = pd.DataFrame([fila[:12] for fila in datos['states']], columns=columnas)
+                df['callsign'] = df['callsign'].str.strip()
+                return df
+        return None
+    except Exception as e:
         return None
 
 df = obtener_vuelos()
 
-if df is not None:
-    # Lógica de filtrado automático
+# --- LÓGICA DE VISUALIZACIÓN ---
+if df is not None and not df.empty:
     df_mostrar = df[df['callsign'].str.contains(busqueda_input, na=False)] if busqueda_input else df
 
-    # --- MAPA VISTA SATÉLITE ---
-    # Usamos ESRI World Imagery para una vista realista de satélite
+    # Mapa con Vista Satélite ESRI
     m = folium.Map(
         location=st.session_state['map_center'], 
         zoom_start=st.session_state['map_zoom'], 
@@ -59,28 +64,21 @@ if df is not None:
     for _, v in df_mostrar.iterrows():
         if not pd.isna(v['lat']) and not pd.isna(v['long']):
             call = v['callsign'] if v['callsign'] else "S/N"
-            alt = int(v['altitud']) if v['altitud'] else 0
-            vel = int(v['velocidad'] * 3.6) if v['velocidad'] else 0
-            rumb = int(v['rumbo']) if v['rumbo'] else 0
+            alt = int(v['altitud']) if not pd.isna(v['altitud']) else 0
+            vel = int(v['velocidad'] * 3.6) if not pd.isna(v['velocidad']) else 0
+            rumb = int(v['rumbo']) if not pd.isna(v['rumbo']) else 0
             
-            # Datos interesantes "Deducidos"
-            # (El origen/destino real requiere una cuenta de pago en OpenSky, 
-            # pero aquí mostramos la info técnica disponible)
             html_popup = f"""
-            <div style="width: 200px; font-family: Arial;">
-                <b style="color: #e67e22; font-size: 14px;">✈ Vuelo: {call}</b><br>
-                <hr>
-                <b>Transpondedor:</b> {v['icao24'].upper()}<br>
-                <b>Origen (País):</b> {v['pais']}<br>
-                <b>Altitud:</b> {alt} m ({int(alt*3.28)} ft)<br>
+            <div style="width: 180px; font-family: sans-serif;">
+                <b style="color: #e67e22;">✈ {call}</b><hr style="margin:5px 0;">
+                <b>Altitud:</b> {alt} m<br>
                 <b>Velocidad:</b> {vel} km/h<br>
-                <b>Rumbo:</b> {rumb}º<br>
-                <p style="font-size: 10px; color: gray;">Información vía ADS-B RealTime</p>
+                <b>País:</b> {v['pais']}
             </div>
             """
             
-            # Icono que rota según el rumbo
-            icon_html = f'''<div style="transform: rotate({rumb}deg); color: #FFF; text-shadow: 0 0 3px #000; font-size: 20px;">✈</div>'''
+            # Icono blanco para que resalte sobre el satélite oscuro
+            icon_html = f'''<div style="transform: rotate({rumb}deg); color: #00FF00; font-size: 20px; text-shadow: 1px 1px 2px black;">✈</div>'''
             
             folium.Marker(
                 [v['lat'], v['long']],
@@ -88,14 +86,18 @@ if df is not None:
                 icon=folium.DivIcon(html=icon_html)
             ).add_to(m)
 
-    # Renderizado
     output = st_folium(m, width="100%", height=600, key="mapa_sat", returned_objects=["zoom", "center"])
 
-    # Guardar posición
     if output:
         if output.get('center'): st.session_state['map_center'] = [output['center']['lat'], output['center']['lng']]
         if output.get('zoom'): st.session_state['map_zoom'] = output['zoom']
 
-    st.info(f"Mostrando {len(df_mostrar)} aviones sobre el terreno.")
+    st.success(f"Radar Activo: {len(df_mostrar)} aviones detectados.")
+
 else:
-    st.error("Esperando datos del satélite...")
+    # Si llega aquí es que la API está saturada o no hay datos
+    st.warning("📡 El satélite está ocupado o no hay vuelos en este sector ahora mismo.")
+    st.info("La API gratuita de OpenSky a veces limita las peticiones. Espera 1 minuto o pulsa el botón de reintento en el lateral.")
+    if st.button("Reintentar Conexión"):
+        st.cache_data.clear()
+        st.rerun()
