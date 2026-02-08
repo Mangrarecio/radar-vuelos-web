@@ -4,27 +4,28 @@ import pandas as pd
 import folium
 from streamlit_folium import st_folium
 from streamlit_autorefresh import st_autorefresh
+from requests.auth import HTTPBasicAuth
 
-# --- CONFIGURACIÓN ESTADO ---
+# --- CREDENCIALES INTEGRADAS ---
+USER_OPENSKY = "mangrarecio"
+PASS_OPENSKY = "Manga1234@"
+
 if 'map_center' not in st.session_state:
     st.session_state['map_center'] = [40.41, -3.70]
 if 'map_zoom' not in st.session_state:
     st.session_state['map_zoom'] = 6
 
-st.set_page_config(page_title="Radar Satelital Pro", layout="wide")
-
-# Actualización cada 2 minutos
+st.set_page_config(page_title="Radar Satelital Premium", layout="wide")
 st_autorefresh(interval=120000, key="datarefresh")
 
-st.title("🌍 Radar de Vuelos Satelital")
+st.title("🌍 Radar de Vuelos Satelital (Cuenta Premium)")
 
 # --- PANEL LATERAL ---
-st.sidebar.header("🔍 Control de Radar")
-busqueda_input = st.sidebar.text_input("Introduce CallSign (ej: IBE2622):", key="search_box").upper().strip()
+st.sidebar.header("🔍 Filtros de Radar")
+busqueda_input = st.sidebar.text_input("Buscar Vuelo (CallSign):", key="search_box").upper().strip()
 
-if st.sidebar.button("🔄 Forzar Actualización / Mostrar Todos"):
-    st.session_state.search_box = ""
-    st.cache_data.clear() # Limpiamos la memoria para traer datos nuevos sí o sí
+if st.sidebar.button("🔄 Forzar Actualización"):
+    st.cache_data.clear()
     st.rerun()
 
 @st.cache_data(ttl=110)
@@ -32,28 +33,31 @@ def obtener_vuelos():
     # Coordenadas de España
     url = "https://opensky-network.org/api/states/all?lamin=34.0&lomin=-10.0&lamax=44.5&lomax=4.5"
     try:
-        # Añadimos un 'User-Agent' para que la API no nos bloquee pensando que somos un robot
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        r = requests.get(url, headers=headers, timeout=15)
+        # Usamos tus credenciales para tener prioridad
+        r = requests.get(
+            url, 
+            auth=HTTPBasicAuth(USER_OPENSKY, PASS_OPENSKY), 
+            timeout=15
+        )
         
         if r.status_code == 200:
             datos = r.json()
-            if datos and 'states' in datos and datos['states'] is not None:
-                columnas = ['icao24', 'callsign', 'pais', 'tiempo', 'contacto', 'long', 'lat', 'altitud', 'suelo', 'velocidad', 'rumbo', 'v_vertical']
-                df = pd.DataFrame([fila[:12] for fila in datos['states']], columns=columnas)
+            if datos and 'states' in datos and datos['states']:
+                cols = ['icao24', 'callsign', 'pais', 'tiempo', 'contacto', 'long', 'lat', 'altitud', 'suelo', 'velocidad', 'rumbo', 'v_vertical']
+                df = pd.DataFrame([f[:12] for f in datos['states']], columns=cols)
                 df['callsign'] = df['callsign'].str.strip()
                 return df
         return None
-    except Exception as e:
+    except:
         return None
 
 df = obtener_vuelos()
 
-# --- LÓGICA DE VISUALIZACIÓN ---
+# --- INTERFAZ ---
 if df is not None and not df.empty:
     df_mostrar = df[df['callsign'].str.contains(busqueda_input, na=False)] if busqueda_input else df
 
-    # Mapa con Vista Satélite ESRI
+    # Mapa Satelital
     m = folium.Map(
         location=st.session_state['map_center'], 
         zoom_start=st.session_state['map_zoom'], 
@@ -63,41 +67,35 @@ if df is not None and not df.empty:
 
     for _, v in df_mostrar.iterrows():
         if not pd.isna(v['lat']) and not pd.isna(v['long']):
-            call = v['callsign'] if v['callsign'] else "S/N"
             alt = int(v['altitud']) if not pd.isna(v['altitud']) else 0
             vel = int(v['velocidad'] * 3.6) if not pd.isna(v['velocidad']) else 0
             rumb = int(v['rumbo']) if not pd.isna(v['rumbo']) else 0
             
-            html_popup = f"""
+            html = f"""
             <div style="width: 180px; font-family: sans-serif;">
-                <b style="color: #e67e22;">✈ {call}</b><hr style="margin:5px 0;">
+                <b style="color: #e67e22; font-size: 14px;">✈ {v['callsign']}</b><hr style="margin:5px 0;">
                 <b>Altitud:</b> {alt} m<br>
                 <b>Velocidad:</b> {vel} km/h<br>
                 <b>País:</b> {v['pais']}
             </div>
             """
             
-            # Icono blanco para que resalte sobre el satélite oscuro
-            icon_html = f'''<div style="transform: rotate({rumb}deg); color: #00FF00; font-size: 20px; text-shadow: 1px 1px 2px black;">✈</div>'''
+            # Icono con sombra para visibilidad total
+            icon_html = f'''<div style="transform: rotate({rumb}deg); color: #00FF00; font-size: 22px; text-shadow: 2px 2px 3px #000;">✈</div>'''
             
             folium.Marker(
                 [v['lat'], v['long']],
-                popup=folium.Popup(html_popup, max_width=250),
+                popup=folium.Popup(html, max_width=250),
                 icon=folium.DivIcon(html=icon_html)
             ).add_to(m)
 
-    output = st_folium(m, width="100%", height=600, key="mapa_sat", returned_objects=["zoom", "center"])
+    output = st_folium(m, width="100%", height=600, key="mapa_v8", returned_objects=["zoom", "center"])
 
     if output:
         if output.get('center'): st.session_state['map_center'] = [output['center']['lat'], output['center']['lng']]
         if output.get('zoom'): st.session_state['map_zoom'] = output['zoom']
 
-    st.success(f"Radar Activo: {len(df_mostrar)} aviones detectados.")
+    st.success(f"Conexión Estable: {len(df_mostrar)} aeronaves en pantalla.")
 
 else:
-    # Si llega aquí es que la API está saturada o no hay datos
-    st.warning("📡 El satélite está ocupado o no hay vuelos en este sector ahora mismo.")
-    st.info("La API gratuita de OpenSky a veces limita las peticiones. Espera 1 minuto o pulsa el botón de reintento en el lateral.")
-    if st.button("Reintentar Conexión"):
-        st.cache_data.clear()
-        st.rerun()
+    st.warning("📡 Sincronizando con OpenSky... Si tarda mucho, pulsa 'Forzar Actualización'.")
