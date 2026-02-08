@@ -5,18 +5,17 @@ import folium
 from streamlit_folium import st_folium
 from streamlit_autorefresh import st_autorefresh
 
-# 1. MEMORIA DE LA PÁGINA (Session State)
+# 1. MEMORIA DE LA PÁGINA
 if 'map_center' not in st.session_state:
     st.session_state['map_center'] = [40.41, -3.70]
 if 'map_zoom' not in st.session_state:
     st.session_state['map_zoom'] = 6
 
-st.set_page_config(page_title="Radar Pro Interactiva", layout="wide")
+st.set_page_config(page_title="Radar Pro - Blindado", layout="wide")
 
-# Actualización automática cada 30 segundos
 st_autorefresh(interval=30000, key="datarefresh")
 
-st.title("🛰️ Centro de Control Aéreo Interactivo")
+st.title("🛰️ Centro de Control Aéreo (Versión Estable)")
 
 def obtener_vuelos():
     url = "https://opensky-network.org/api/states/all?lamin=34.0&lomin=-10.0&lamax=44.5&lomax=4.5"
@@ -40,34 +39,36 @@ if df is not None:
     )
 
     for _, v in df.iterrows():
-        # --- LIMPIEZA DE DATOS (Seguridad ante Nones) ---
-        # Si el dato existe, lo convertimos a int; si no, ponemos 0 o "N/A"
+        # --- LIMPIEZA DE DATOS NIVEL EXPERTO ---
+        # Usamos pd.isna() para detectar CUALQUIER tipo de valor vacío
         lat, lon = v['lat'], v['long']
         
-        if lat and lon:
-            callsign = v['callsign'] if v['callsign'] else "DESCONOCIDO"
-            altitud = int(v['altitud']) if v['altitud'] is not None else 0
-            velocidad = int(v['velocidad'] * 3.6) if v['velocidad'] is not None else 0
-            rumbo = int(v['rumbo']) if v['rumbo'] is not None else 0
-            v_vertical = v['v_vertical'] if v['v_vertical'] is not None else 0
-            pais = v['pais'] if v['pais'] else "No disponible"
+        if not pd.isna(lat) and not pd.isna(lon):
+            # Creamos variables seguras
+            callsign = v['callsign'] if not pd.isna(v['callsign']) else "???"
+            
+            # Si el valor no es un número válido, ponemos 0
+            try:
+                altitud = int(v['altitud']) if not pd.isna(v['altitud']) else 0
+                velocidad = int(v['velocidad'] * 3.6) if not pd.isna(v['velocidad']) else 0
+                rumbo = int(v['rumbo']) if not pd.isna(v['rumbo']) else 0
+            except:
+                altitud, velocidad, rumbo = 0, 0, 0
+                
+            pais = v['pais'] if not pd.isna(v['pais']) else "Internacional"
 
-            # 2. VENTANA EMERGENTE PROFESIONAL
+            # Ventana emergente
             html_popup = f"""
-            <div style="font-family: sans-serif; min-width: 200px; color: #333;">
-                <h4 style="margin-bottom: 5px; color: #007bff;">Vuelo: {callsign}</h4>
-                <table style="width: 100%; border-collapse: collapse;">
-                    <tr style="border-bottom: 1px solid #eee;"><td><b>País:</b></td><td>{pais}</td></tr>
-                    <tr style="border-bottom: 1px solid #eee;"><td><b>Altitud:</b></td><td>{altitud} m</td></tr>
-                    <tr style="border-bottom: 1px solid #eee;"><td><b>Velocidad:</b></td><td>{velocidad} km/h</td></tr>
-                    <tr style="border-bottom: 1px solid #eee;"><td><b>Rumbo:</b></td><td>{rumbo}°</td></tr>
-                    <tr style="border-bottom: 1px solid #eee;"><td><b>Ascenso:</b></td><td>{v_vertical} m/s</td></tr>
-                </table>
-                <p style="font-size: 10px; margin-top: 10px; color: gray;">Haz clic fuera para cerrar</p>
+            <div style="font-family: sans-serif; min-width: 180px;">
+                <h4 style="color: #007bff; margin: 0;">{callsign}</h4>
+                <hr style="margin: 5px 0;">
+                <p style="margin: 2px 0;"><b>País:</b> {pais}</p>
+                <p style="margin: 2px 0;"><b>Alt:</b> {altitud} m</p>
+                <p style="margin: 2px 0;"><b>Vel:</b> {velocidad} km/h</p>
             </div>
             """
             
-            icon_html = f'''<div style="transform: rotate({rumbo}deg); color: #00FF00; font-size: 18px; cursor: pointer;">✈</div>'''
+            icon_html = f'''<div style="transform: rotate({rumbo}deg); color: #00FF00; font-size: 18px;">✈</div>'''
             
             folium.Marker(
                 [lat, lon],
@@ -75,14 +76,14 @@ if df is not None:
                 icon=folium.DivIcon(html=icon_html)
             ).add_to(m)
 
-    # 3. CAPTURAR EL MOVIMIENTO DEL USUARIO
-    map_data = st_folium(m, width="100%", height=600, key="mapa_principal")
+    # Mostrar mapa y capturar interacción
+    output = st_folium(m, width="100%", height=600, key="mapa_v5")
 
-    # Guardar posición si el usuario mueve el mapa
-    if map_data and 'center' in map_data and map_data['center'] is not None:
-        st.session_state['map_center'] = [map_data['center']['lat'], map_data['center']['lng']]
-    if map_data and 'zoom' in map_data and map_data['zoom'] is not None:
-        st.session_state['map_zoom'] = map_data['zoom']
+    # Guardar posición para que no se resetee el zoom
+    if output and output.get('center'):
+        st.session_state['map_center'] = [output['center']['lat'], output['center']['lng']]
+    if output and output.get('zoom'):
+        st.session_state['map_zoom'] = output['zoom']
 
 else:
-    st.error("📡 Buscando señal de satélite...")
+    st.info("Esperando datos de la API de OpenSky...")
