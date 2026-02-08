@@ -6,7 +6,6 @@ from streamlit_folium import st_folium
 from streamlit_autorefresh import st_autorefresh
 
 # 1. MEMORIA DE LA PÁGINA (Session State)
-# Esto evita que el mapa se resetee al actualizar
 if 'map_center' not in st.session_state:
     st.session_state['map_center'] = [40.41, -3.70]
 if 'map_zoom' not in st.session_state:
@@ -25,7 +24,6 @@ def obtener_vuelos():
         r = requests.get(url, timeout=10)
         datos = r.json()
         columnas = ['icao24', 'callsign', 'pais', 'tiempo', 'contacto', 'long', 'lat', 'altitud', 'suelo', 'velocidad', 'rumbo', 'v_vertical']
-        # Cogemos las primeras 12 columnas
         df = pd.DataFrame([fila[:12] for fila in datos['states']], columns=columnas)
         df['callsign'] = df['callsign'].str.strip()
         return df
@@ -35,8 +33,6 @@ def obtener_vuelos():
 df = obtener_vuelos()
 
 if df is not None:
-    # --- CREACIÓN DEL MAPA ---
-    # Usamos los valores guardados en la "memoria" (session_state)
     m = folium.Map(
         location=st.session_state['map_center'], 
         zoom_start=st.session_state['map_zoom'], 
@@ -44,44 +40,49 @@ if df is not None:
     )
 
     for _, v in df.iterrows():
-        if v['lat'] and v['long']:
-            # 2. VENTANA EMERGENTE PROFESIONAL (HTML)
-            # Aquí diseñamos la ventanita que verás al hacer clic
+        # --- LIMPIEZA DE DATOS (Seguridad ante Nones) ---
+        # Si el dato existe, lo convertimos a int; si no, ponemos 0 o "N/A"
+        lat, lon = v['lat'], v['long']
+        
+        if lat and lon:
+            callsign = v['callsign'] if v['callsign'] else "DESCONOCIDO"
+            altitud = int(v['altitud']) if v['altitud'] is not None else 0
+            velocidad = int(v['velocidad'] * 3.6) if v['velocidad'] is not None else 0
+            rumbo = int(v['rumbo']) if v['rumbo'] is not None else 0
+            v_vertical = v['v_vertical'] if v['v_vertical'] is not None else 0
+            pais = v['pais'] if v['pais'] else "No disponible"
+
+            # 2. VENTANA EMERGENTE PROFESIONAL
             html_popup = f"""
             <div style="font-family: sans-serif; min-width: 200px; color: #333;">
-                <h4 style="margin-bottom: 5px; color: #007bff;">Vuelo: {v['callsign']}</h4>
+                <h4 style="margin-bottom: 5px; color: #007bff;">Vuelo: {callsign}</h4>
                 <table style="width: 100%; border-collapse: collapse;">
-                    <tr style="border-bottom: 1px solid #eee;"><td><b>País:</b></td><td>{v['pais']}</td></tr>
-                    <tr style="border-bottom: 1px solid #eee;"><td><b>Altitud:</b></td><td>{int(v['altitud'])} m</td></tr>
-                    <tr style="border-bottom: 1px solid #eee;"><td><b>Velocidad:</b></td><td>{int(v['velocidad']*3.6)} km/h</td></tr>
-                    <tr style="border-bottom: 1px solid #eee;"><td><b>Rumbo:</b></td><td>{int(v['rumbo'])}°</td></tr>
-                    <tr style="border-bottom: 1px solid #eee;"><td><b>Ascenso:</b></td><td>{v['v_vertical']} m/s</td></tr>
-                    <tr><td><b>ID Transpondedor:</b></td><td><code>{v['icao24']}</code></td></tr>
+                    <tr style="border-bottom: 1px solid #eee;"><td><b>País:</b></td><td>{pais}</td></tr>
+                    <tr style="border-bottom: 1px solid #eee;"><td><b>Altitud:</b></td><td>{altitud} m</td></tr>
+                    <tr style="border-bottom: 1px solid #eee;"><td><b>Velocidad:</b></td><td>{velocidad} km/h</td></tr>
+                    <tr style="border-bottom: 1px solid #eee;"><td><b>Rumbo:</b></td><td>{rumbo}°</td></tr>
+                    <tr style="border-bottom: 1px solid #eee;"><td><b>Ascenso:</b></td><td>{v_vertical} m/s</td></tr>
                 </table>
-                <p style="font-size: 10px; margin-top: 10px; color: gray;">Haz clic en la X para cerrar</p>
+                <p style="font-size: 10px; margin-top: 10px; color: gray;">Haz clic fuera para cerrar</p>
             </div>
             """
             
-            icon_html = f'''<div style="transform: rotate({v['rumbo']}deg); color: #00FF00; font-size: 18px; cursor: pointer;">✈</div>'''
+            icon_html = f'''<div style="transform: rotate({rumbo}deg); color: #00FF00; font-size: 18px; cursor: pointer;">✈</div>'''
             
             folium.Marker(
-                [v['lat'], v['long']],
+                [lat, lon],
                 popup=folium.Popup(html_popup, max_width=300),
                 icon=folium.DivIcon(html=icon_html)
             ).add_to(m)
 
     # 3. CAPTURAR EL MOVIMIENTO DEL USUARIO
-    # Esta función detecta si el usuario mueve el mapa o hace zoom
     map_data = st_folium(m, width="100%", height=600, key="mapa_principal")
 
-    # Si el usuario movió el mapa, guardamos la nueva posición para la próxima actualización
-    if map_data['last_object_clicked_popup'] is None: # Solo si no estamos interactuando con un popup
-        if map_data['center'] is not None:
-            st.session_state['map_center'] = [map_data['center']['lat'], map_data['center']['lng']]
-        if map_data['zoom'] is not None:
-            st.session_state['map_zoom'] = map_data['zoom']
-
-    st.info("💡 Haz clic en cualquier avión para ver su hoja técnica. El mapa mantendrá tu posición al actualizarse.")
+    # Guardar posición si el usuario mueve el mapa
+    if map_data and 'center' in map_data and map_data['center'] is not None:
+        st.session_state['map_center'] = [map_data['center']['lat'], map_data['center']['lng']]
+    if map_data and 'zoom' in map_data and map_data['zoom'] is not None:
+        st.session_state['map_zoom'] = map_data['zoom']
 
 else:
-    st.error("No se pudo recibir señal. Reintentando...")
+    st.error("📡 Buscando señal de satélite...")
